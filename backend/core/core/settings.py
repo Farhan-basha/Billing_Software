@@ -11,21 +11,29 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 from pathlib import Path
+from decouple import config, Csv
+import logging
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
-
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-ze6(!x-@(_k$j*f-+uh-)yz(r-(4ih9max#vj^r3_=ic8h&#5i'
+SECRET_KEY = config(
+    'SECRET_KEY',
+    default='django-insecure-CHANGE-THIS-IN-PRODUCTION-ze6(!x-@(_k$j*f-+uh-)yz(r-(4ih9max#vj^r3_=ic8h&#5i'
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = config(
+    'ALLOWED_HOSTS',
+    default='localhost,127.0.0.1',
+    cast=Csv()
+)
 
 
 # Application definition
@@ -37,11 +45,15 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'corsheaders',
+    'django_filters',
+    'common',
     'accounts',
     'customers',
     'invoices',
     'settings_app',
-    'corsheaders',
 ]
 AUTH_USER_MODEL = 'accounts.User'
 
@@ -82,12 +94,20 @@ WSGI_APPLICATION = 'core.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'standard_steels_db',
-        'USER': 'postgres',
-        'PASSWORD': 'mcqeen',
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'ENGINE': config(
+            'DB_ENGINE',
+            default='django.db.backends.sqlite3'
+        ),
+        'NAME': config(
+            'DB_NAME',
+            default=str(BASE_DIR / 'db.sqlite3')
+        ),
+        'USER': config('DB_USER', default=''),
+        'PASSWORD': config('DB_PASSWORD', default=''),
+        'HOST': config('DB_HOST', default=''),
+        'PORT': config('DB_PORT', default=''),
+        'ATOMIC_REQUESTS': True,
+        'CONN_MAX_AGE': 600,
     }
 }
 
@@ -135,6 +155,145 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
-CORS_ALLOW_ALL_ORIGINS = True
+# ============================================================
+# REST Framework Configuration
+# ============================================================
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': config('API_PAGINATION_SIZE', default=20, cast=int),
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': config('API_THROTTLE_RATE', default='100/hour'),
+        'user': config('API_THROTTLE_RATE', default='1000/hour')
+    },
+    'EXCEPTION_HANDLER': 'common.handlers.custom_exception_handler',
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+}
+
+# ============================================================
+# JWT Configuration
+# ============================================================
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(
+        minutes=config('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', default=5, cast=int)
+    ),
+    'REFRESH_TOKEN_LIFETIME': timedelta(
+        days=config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=7, cast=int)
+    ),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+}
+
+
+# ============================================================
+# CORS Configuration
+# ============================================================
+
+CORS_ALLOWED_ORIGINS = config(
+    'CORS_ALLOWED_ORIGINS',
+    default='http://localhost:3000,http://127.0.0.1:3000',
+    cast=Csv()
+)
 
 CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+
+# ============================================================
+# Logging Configuration
+# ============================================================
+
+# Create logs directory if it doesn't exist
+import os
+LOGS_DIR = BASE_DIR / 'logs'
+if not LOGS_DIR.exists():
+    LOGS_DIR.mkdir(exist_ok=True)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {asctime} {message}',
+            'style': '{',
+        },
+    },
+    'filters': {
+        'require_debug_false': {
+            '()': 'django.utils.log.RequireDebugFalse',
+        },
+        'require_debug_true': {
+            '()': 'django.utils.log.RequireDebugTrue',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': config('LOG_LEVEL', default='INFO'),
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        'file': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOGS_DIR / config('LOG_FILE', default='django.log'),
+            'maxBytes': 1024 * 1024 * 15,  # 15MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file'],
+            'level': config('LOG_LEVEL', default='INFO'),
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['file'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'billing_app': {
+            'handlers': ['console', 'file'],
+            'level': config('LOG_LEVEL', default='INFO'),
+            'propagate': False,
+        },
+    },
+}
+
+
+CORS_ALLOW_ALL_ORIGINS = False
+
+CORS_ALLOW_CREDENTIALS = True
+
